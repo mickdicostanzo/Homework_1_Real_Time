@@ -1,8 +1,5 @@
 all: filter store
 
-# filter: filter.o rt-lib.o
-# 	gcc -o filter filter.o rt-lib.o -lrt -pthread
-
 filter: filter.o rt-lib.o
 	gcc -o filter filter.o rt-lib.o -lrt -pthread -lm
 
@@ -19,4 +16,4 @@ rt-lib.o: rt-lib.c rt-lib.h
 	gcc -c rt-lib.c
 
 clean:
-	rm *.o filter store
+	rm -f *.o filter store
