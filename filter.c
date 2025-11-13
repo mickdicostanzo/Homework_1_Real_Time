@@ -7,6 +7,7 @@
     - Di Costanzo Michele Pio
     - Di Palma Lorenzo
     - Zaccone Amedeo
+    I più forti
 */
 
 #define _GNU_SOURCE
