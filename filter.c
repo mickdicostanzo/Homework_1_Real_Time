@@ -136,8 +136,9 @@ void generator_thread_body(){
     pthread_mutex_lock(&mutex);
     sig_val = sig_val_l;
     sig_noise = sig_noise_l;
-    pthread_mutex_unlock(&mutex);
     glob_time += (1.0/F_SAMPLE); /* Sampling period in s */
+    pthread_mutex_unlock(&mutex);
+    
    
 }
 
@@ -154,6 +155,8 @@ void filter_thread_body(mqd_t coda){
     double sig_filt;
     pthread_mutex_lock(&mutex);
     double sig_noise_l = sig_noise;
+    double sig_val_l = sig_val;
+    double time_l = glob_time;
     pthread_mutex_unlock(&mutex);
     // Apply Filter to signal
     if(flag_type== 2){
@@ -164,7 +167,7 @@ void filter_thread_body(mqd_t coda){
         sig_filt = get_mean_filter(sig_noise_l);
     }
     // Debug
-    printf("tempo: %lf, sig_val: %lf, sig_noise: %lf, sig_filter: %lf\n", glob_time, sig_val,sig_noise, sig_filt);
+    printf("tempo: %lf, sig_val: %lf, sig_noise: %lf, sig_filter: %lf\n", time_l, sig_val_l,sig_noise_l, sig_filt);
     char msg[MSG_SIZE];
     char msg_signale[20];
 
@@ -253,6 +256,7 @@ void parse_cmdline(int argc, char ** argv){
 
 int main(int argc, char ** argv){
 
+
     periodic_thread *generator =  (periodic_thread *)malloc(sizeof(periodic_thread));
     periodic_thread *filter = (periodic_thread *) malloc(sizeof(periodic_thread));
 
@@ -269,6 +273,8 @@ int main(int argc, char ** argv){
 	// double t_sample = (1.0/f_sample) * 1000 * 1000 * 1000; /* Sampling period in ns */
 
     mqd_t q_store_local; //VEDERE SE DA METTERE GLOBALE
+
+    //mlockall();
 
 	// Command line input parsing
 	parse_cmdline(argc, argv);
@@ -313,8 +319,10 @@ int main(int argc, char ** argv){
     }
     */
 
+    
     pthread_create(&gen, &gen_attr, generator_thread, (void *)generator);
     pthread_create(&filt, &filt_attr, filter_thread, (void *)filter);
+
 
 
     //JOINARE THREAD E CHIUDERE CODE
