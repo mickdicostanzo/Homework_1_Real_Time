@@ -44,7 +44,7 @@
 	""
 	
 struct timespec r;
-int period = 1/F_SAMPLE * NSEC_PER_SEC;
+double period = 1/F_SAMPLE * NSEC_PER_SEC;
 
 void timespec_add_us(struct timespec *t, unsigned long d)
 {
@@ -71,7 +71,7 @@ void start_periodic_timer(uint64_t offs, int t)
 void store_body(mqd_t q_store, FILE * outfd){
     char msg[MSG_SIZE];
     int count = 0;
-    const char delim[] = " ";
+    const char delim[] = ",";
     char * token;
     for(int i=0; i<SIZEQ; i++){
 

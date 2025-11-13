@@ -62,14 +62,14 @@ int flag_signal = 0;
 int flag_noise = 0;
 int flag_filtered = 0;
 int flag_type = 0; // 1:mean, 2:butterworth
-
+unsigned long sample_index = 0;
 double sig_noise;
 double sig_val;
 
 pthread_mutex_t mutex;
 
 double glob_time = 0.0;
-
+double last_timestamp = 0;
 double get_butter(double cur, double * a, double * b)
 {
 	double retval;
@@ -120,10 +120,9 @@ double get_mean_filter(double cur)
 	return retval;
 }
 
-
 void generator_thread_body(){
 	// Generate signal
-    // glob_time = 0;
+    // 
 	double sig_val_l= sin(2*M_PI*SIG_HZ*glob_time);
 
 	// Add noise to signal
@@ -136,7 +135,9 @@ void generator_thread_body(){
     pthread_mutex_lock(&mutex);
     sig_val = sig_val_l;
     sig_noise = sig_noise_l;
+    last_timestamp = glob_time;
     glob_time += (1.0/F_SAMPLE); /* Sampling period in s */
+    // sample_index++;
     pthread_mutex_unlock(&mutex);
     
    
@@ -152,12 +153,20 @@ void* generator_thread(void * arg){
 }
 
 void filter_thread_body(mqd_t coda){
+    static unsigned long last_processed_index = 0;
     double sig_filt;
+    double time_l = last_timestamp;
+    unsigned long local_index;
     pthread_mutex_lock(&mutex);
     double sig_noise_l = sig_noise;
     double sig_val_l = sig_val;
-    double time_l = glob_time;
+    local_index   = sample_index;
     pthread_mutex_unlock(&mutex);
+    
+    if (local_index == last_processed_index && last_processed_index !=0) {
+        return;
+    }
+    last_processed_index = local_index;
     // Apply Filter to signal
     if(flag_type== 2){
         //double sig_filt = get_butter(sig_noise, a, b);
@@ -170,26 +179,66 @@ void filter_thread_body(mqd_t coda){
     printf("tempo: %lf, sig_val: %lf, sig_noise: %lf, sig_filter: %lf\n", time_l, sig_val_l,sig_noise_l, sig_filt);
     char msg[MSG_SIZE];
     char msg_signale[20];
+    char msg_noise[20];
+    char msg_filt[20];
+     int n;
+
+
+    
+    //  int n_temp = snprintf(msg, sizeof(msg), "%lf ", time_l);
+
+    //  if(flag_signal){
+    //     n = snprintf(msg, sizeof(msg), "%lf %lf %s %s\n",time_l, sig_val_l,',', ',');
+    //  }
+    //  if(flag_noise){
+    //    n = snprintf(msg, sizeof(msg), "%lf %lf %lf %s\n",time_l, ',',sig_noise_l, ',');
+        
+    // }
+    // if(flag_filtered){
+    //     n = snprintf(msg, sizeof(msg), "%lf %s %s %lf\n",time_l, ',',',', sig_filt);
+        
+    //  }
+    //  if(flag_signal && flag_noise){
+    //    n = snprintf(msg, sizeof(msg), "%lf %lf %lf %s\n",time_l, sig_val_l, sig_noise_l, ',');  
+    //  }
+    //  if(flag_signal && flag_filtered){
+    //    n = snprintf(msg, sizeof(msg), "%lf %lf %s %lf\n",time_l, sig_val_l, ',', sig_filt);  
+    //  }
+    //  if(flag_noise && flag_filtered){
+    //    n = snprintf(msg, sizeof(msg), "%lf %s %lf %lf\n",time_l, ',', sig_noise_l, sig_filt);  
+    //  }
+     
+    //  if(flag_signal && flag_noise && flag_filtered){
+       n = snprintf(msg, sizeof(msg), "%lf %lf %lf %lf\n",time_l, sig_val_l, sig_noise_l, sig_filt);  
+    //  }
+    //  printf("Messaggio da inviare: %s\n", msg);
+    
+
 
     /*
-    snprintf(msg_signale,sizeof(msg_signale),"%lf ", sig_val);  
-    strcat(msg, msg_signale);
-    strcat(msg, " ");
-    snprintf(msg_signale,sizeof(msg_signale),"%lf ", sig_noise_l);
-    strcat(msg, " ");
-    snprintf(msg_signale,sizeof(msg_signale),"%lf\n", sig_filt);
-    strcat(msg, msg_signale);
-    */
+        char msg[MSG_SIZE];
+    char sig_buf[32]   = " ";
+    char noise_buf[32] = " ";
+    char filt_buf[32]  = " ";
+    if (flag_signal) {
+    snprintf(sig_buf, sizeof(sig_buf), "%lf", sig_val_l);
+}
 
-    int n = snprintf(msg, sizeof(msg), "%lf %lf %lf %lf\n",glob_time, sig_val, sig_noise, sig_filt);
-    if (n < 0 || n >= (int)sizeof(msg)) {
-        fprintf(stderr, "Filter: message truncated or snprintf error\n");
-        return;
-    }
-    if (mq_send (coda, msg, strlen (msg) + 1, 0) == -1) {
-        perror ("Filter: mq_send");
-        exit (1);
-    }
+if (flag_noise) {
+    snprintf(noise_buf, sizeof(noise_buf), "%lf", sig_noise_l);
+}
+
+if (flag_filtered) {
+    snprintf(filt_buf, sizeof(filt_buf), "%lf", sig_filt);
+}
+
+int n = snprintf(msg, sizeof(msg), "%lf,%s,%s,%s\n", time_l, sig_val_l, sig_noise_l, sig_filt);
+if (n < 0 || n >= (int)sizeof(msg)) {
+    fprintf(stderr, "Filter: message truncated or snprintf error\n");
+    return;
+}
+    
+    */
 }
 
 void* filter_thread(void * arg){
@@ -319,12 +368,22 @@ int main(int argc, char ** argv){
     }
     */
 
-    
+
+    /*
+     cpu_set_t cpuset;
+    CPU_ZERO(&cpuset);
+    CPU_SET(3, &cpuset);
+
+    */
+   
     pthread_create(&gen, &gen_attr, generator_thread, (void *)generator);
     pthread_create(&filt, &filt_attr, filter_thread, (void *)filter);
 
-
-
+    /*
+     pthread_setaffinity_np(gen, sizeof(cpu_set_t), &cpuset);
+    pthread_setaffinity_np(filt, sizeof(cpu_set_t), &cpuset);
+    */
+   
     //JOINARE THREAD E CHIUDERE CODE
     
     pthread_join(gen, NULL);

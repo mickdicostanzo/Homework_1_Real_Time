@@ -4,7 +4,7 @@ rm -f /dev/mqueue/print_q
 rm -f /dev/mqueue/mse_q
 
 # Launch the first C program
-./store &
+ ./store &
 # Store its PID
 STORE_PID=$!
 
