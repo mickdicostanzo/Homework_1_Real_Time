@@ -20,7 +20,7 @@ kill_processes() {
 trap kill_processes SIGINT
 
 # Wait for user input
-read -p "Press 'q' to exit: " input
+read -p "Press 'q' to exit: \n" input
 
 # If user input is 'q', call the kill_processes function
 if [ "$input" == "q" ]; then

@@ -158,7 +158,7 @@ void filter_thread_body(mqd_t coda){
     }
 
     // Debug
-    printf("sig_noise: %lf, sig_filter: %lf\n", sig_noise_l, sig_filt);
+    printf(" time: %lf, sig_val: %lf,sig_noise:%lf, sig_filter: %lf\n", global_time,sig_val,sig_noise, sig_filt);
 
     char msg[MSG_SIZE];
     int n = snprintf(msg, sizeof(msg), "%lf %lf %lf %lf\n", global_time, sig_val_l, sig_noise_l, sig_filt);
@@ -176,6 +176,7 @@ void *filter_thread(void * arg){
     periodic_thread * thd = (periodic_thread *) arg;
     mqd_t q_store;
 
+    // mq_unlink(Q_STORE);
     if ((q_store = mq_open(Q_STORE, O_WRONLY)) == -1) {
         perror("Filter: mq_open (store)");
         pthread_exit(NULL);
@@ -291,6 +292,7 @@ int main(int argc, char ** argv){
     pthread_mutexattr_destroy(&mutex_attr);
     pthread_mutex_destroy(&mutex);
 
+    
     mq_unlink(Q_STORE);  // se vuoi rimuovere la coda alla fine
 
     free(generator);
