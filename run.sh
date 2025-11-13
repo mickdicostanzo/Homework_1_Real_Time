@@ -1,4 +1,7 @@
 #!/bin/bash
+echo "Pulizia code..."
+rm -f /dev/mqueue/print_q
+rm -f /dev/mqueue/mse_q
 
 # Launch the first C program
 ./store &
@@ -20,7 +23,9 @@ kill_processes() {
 trap kill_processes SIGINT
 
 # Wait for user input
-read -p "Press 'q' to exit: " input
+echo "Press 'q' to exit: "
+read input
+# read -p "Press 'q' to exit: " input
 
 # If user input is 'q', call the kill_processes function
 if [ "$input" == "q" ]; then
