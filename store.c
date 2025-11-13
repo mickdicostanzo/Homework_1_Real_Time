@@ -80,21 +80,16 @@ void store_body(mqd_t q_store, FILE * outfd){
         if (count % 3 == 0) {
             fprintf(outfd, "\n");     // ogni 3 token, vai a capo
         } else {
-            fprintf(outfd, " ");      // altrimenti, separa con spazio
+            fprintf(outfd, "\t");      // altrimenti, separa con tab
         }
         token = strtok(NULL, delim);  // prossimo token
     }
 
-    // se il numero di token non è multiplo di 3, chiudi la riga
-    if (count % 3 != 0)
-        fprintf(outfd, "\n");
-
-    printf("Scrittura completata!\n");
+    //printf("Scrittura completata!\n");
     fflush(outfd);
 }
 
-int main(int argc, char ** argv)
-{
+int main(int argc, char ** argv){
     int outfile;
     FILE * outfd;
 
@@ -116,10 +111,13 @@ int main(int argc, char ** argv)
         perror("Unable to open/create output file. Exiting.");
         return EXIT_FAILURE;
     }
+    start_periodic_timer(0, period);
     while(1){
         wait_next_activation();
         store_body(q_store, outfd);
     }
+    mq_close (q_store);
+    mq_unlink (Q_STORE);
     fclose(outfd);
 
 }

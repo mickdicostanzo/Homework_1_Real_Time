@@ -40,8 +40,8 @@
 /*
     POSSIBILI CORREZIONI DA FARE;
     - sistemare la parte di apertura della coda di messaggi (aprire una volta sola)
-    - cambiare nei start periodic timer &thd con thd perchè start periodic timer prende un puntatore
-    -usare struttura per periodic thread e coda per filter thread
+    - cambiare nei start periodic timer &thd con thd perché start periodic timer prende un puntatore
+    - usare struttura per periodic thread e coda per filter thread
 */
 
 
@@ -139,7 +139,7 @@ void generator_thread_body(){
 
 void generator_thread(void * arg){
     periodic_thread * thd = (periodic_thread *) arg;
-    start_periodic_timer(&thd, thd->period);
+    start_periodic_timer(thd, thd->period);
     while(1){
         wait_next_activation(thd);
         generator_thread_body();
@@ -183,7 +183,6 @@ void filter_thread_body(mqd_t coda){
         perror ("Filter: mq_send");
         exit (1);
     }
-    //mq_close (coda);  //va nella main
 }
 
 void filter_thread(void * arg){
@@ -196,16 +195,21 @@ void filter_thread(void * arg){
     //attr.mq_msgsize = MSG_SIZE;
     //attr.mq_curmsgs = 0;
 
-    /*
+    mqd_t q_store;
+
      if ((q_store = mq_open (Q_STORE, O_WRONLY)) == -1) {
         perror ("Filter: mq_open (store)");
         exit (1);
     }
-    */
-    start_periodic_timer(&thd, thd->period);
+    start_periodic_timer(thd, thd->period);
     while(1){
         wait_next_activation(thd);
         filter_thread_body(q_store);
+        // if char = boh -> print, break
+        if(getchar() == 'q'){
+            printf("uscita dal thread avvenuta con successo\n");
+            pthread_exit((mqd_t *)q_store);
+        }
     }
 }
 
@@ -243,8 +247,7 @@ void parse_cmdline(int argc, char ** argv){
 }
 
 
-int main(int argc, char ** argv)
-{
+int main(int argc, char ** argv){
 
     periodic_thread *generator =  (periodic_thread *)malloc(sizeof(periodic_thread));
     periodic_thread *filter = (periodic_thread *) malloc(sizeof(periodic_thread));
@@ -262,7 +265,7 @@ int main(int argc, char ** argv)
     int f_sample = F_SAMPLE; /* Frequency of sampling in Hz */
 	double t_sample = (1.0/f_sample) * 1000 * 1000 * 1000; /* Sampling period in ns */
 
-    mqd_t q_store; //VEDERE SE DA METTERE GLOBALE
+    mqd_t q_store_local; //VEDERE SE DA METTERE GLOBALE
 
 	// Command line input parsing
 	parse_cmdline(argc, argv);
@@ -300,18 +303,28 @@ int main(int argc, char ** argv)
     filter->wcet = 1000; //da rivedere    
     filter->priority = 70; //da rivedere 
 
+    /*
     if ((q_store = mq_open (Q_STORE, O_WRONLY)) == -1) {
         perror ("Filter: mq_open (store)");
         exit (1);
     }
+    */
 
     pthread_create(&gen, &gen_attr, generator_thread, (void *)generator);
     pthread_create(&filt, &filt_attr, filter_thread, (void *)filter);
 
 
     //JOINARE THREAD E CHIUDERE CODE
+    
     pthread_join(gen, NULL);
-    pthread_join(filt, NULL);
-    mq_close (q_store);
+    pthread_join(filt, (void**)&q_store_local);
+    mqd_t *q_store_final = (mqd_t *) q_store_local;
+    pthread_attr_destroy(&gen_attr);
+    pthread_attr_destroy(&filt_attr);
+    pthread_mutexattr_destroy(&mutex_attr);
+    pthread_mutex_destroy(&mutex);
+    mq_close (q_store_final);
     mq_unlink (Q_STORE);
+    free(generator);
+    free(filter);
 }
