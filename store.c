@@ -3,10 +3,10 @@
     Signal Generation, Filtering and Storage using POSIX real-time extensions
     filter.c: Signal filtering module
     PARTECIPANTI:
-    - Annunziata Giovanni
-    - Di Costanzo Michele Pio
-    - Di Palma Lorenzo
-    - Zaccone Amedeo
+    - Annunziata Giovanni              DE6000015
+    - Di Costanzo Michele Pio          DE6000001
+    - Di Palma Lorenzo                 N39001908 
+    - Zaccone Amedeo                   DE6000014  
 */
 
 #define _GNU_SOURCE
@@ -33,6 +33,7 @@
 #define SIZEQ 10
 #define MSG_SIZE 256
 #define Q_STORE "/print_q"
+#define QMSE_STORE "/mse_q"
 #define QUEUE_PERMISSIONS 0660
 #define NSEC_PER_SEC 1000000000ULL
 
@@ -70,7 +71,7 @@ void start_periodic_timer(uint64_t offs, int t)
 }
 
 
-void store_body(mqd_t q_store, FILE * outfd){
+void store_body(mqd_t q_store,mqd_t mse_store, FILE * outfd){
     char msg[MSG_SIZE];
     const char delim[] = " ";
     char * token;
@@ -87,7 +88,7 @@ void store_body(mqd_t q_store, FILE * outfd){
         //fprintf(outfd, "%s", token);  // scrive il token
         count++;
 
-        if (strcasecmp(token, "nan") != 0 && strcasecmp(token, "inf") != 0) {
+        if (strcasecmp(token, "nan") != 0 ) {
                 // Se NON è "nan" o "inf", scrive il token
                 fprintf(outfd, "%s", token);
             }
@@ -102,6 +103,13 @@ void store_body(mqd_t q_store, FILE * outfd){
 }
     //printf("Scrittura completata!\n");
     fflush(outfd);
+
+    char mse_msg[MSG_SIZE];
+    if(mq_receive(mse_store,mse_msg,MSG_SIZE,NULL) == -1){
+        perror("Store: mq_receive (mse)");
+        exit(1);
+    }
+    printf("current_mse: %s",mse_msg);
 }
 
 int main(int argc, char ** argv){
@@ -109,17 +117,30 @@ int main(int argc, char ** argv){
     FILE * outfd;
 
     mqd_t q_store;
+    mqd_t mse_store;
     struct mq_attr attr;
+    struct mq_attr mse_attr;
 
     attr.mq_flags = 0;
     attr.mq_maxmsg = SIZEQ;
     attr.mq_msgsize = MSG_SIZE;
     attr.mq_curmsgs = 0;
 
+    mse_attr.mq_flags =0;
+    mse_attr.mq_maxmsg = SIZEQ;
+    mse_attr.mq_msgsize = MSG_SIZE;
+    mse_attr.mq_curmsgs = 0;
+
     if ((q_store = mq_open (Q_STORE, O_RDONLY | O_CREAT,QUEUE_PERMISSIONS,&attr)) == -1) {
         perror ("Store: mq_open (store)");
         exit (1);
     }
+
+    if ((mse_store = mq_open (QMSE_STORE, O_RDONLY | O_CREAT,QUEUE_PERMISSIONS,&mse_attr)) == -1) {
+        perror ("Store: mq_open (mse_store)");
+        exit (1);
+    }
+
     outfile = open(OUTFILE, O_WRONLY | O_CREAT | O_TRUNC, 0666);
     outfd = fdopen(outfile, "w");
     if (outfile < 0 || !outfd) {
@@ -129,9 +150,11 @@ int main(int argc, char ** argv){
     start_periodic_timer(0, period);
     while(1){
         wait_next_activation();
-        store_body(q_store, outfd);
+        store_body(q_store,mse_store, outfd);
     }
     mq_close (q_store);
+    mq_close (mse_store);
     mq_unlink (Q_STORE);
+    mq_unlink (QMSE_STORE);
     fclose(outfd);
 }

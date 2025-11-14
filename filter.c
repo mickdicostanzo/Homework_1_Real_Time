@@ -3,10 +3,12 @@
     Signal Generation, Filtering and Storage using POSIX real-time extensions
     filter.c: Signal filtering module
     PARTECIPANTI:
-    - Annunziata Giovanni
-    - Di Costanzo Michele Pio
-    - Di Palma Lorenzo
-    - Zaccone Amedeo
+    - Annunziata Giovanni              DE6000015
+    - Di Costanzo Michele Pio          DE6000001
+    - Di Palma Lorenzo                 N39001908 
+    - Zaccone Amedeo                   DE6000014 
+    
+    Autonomous System regna.
 */
 
 /* 
@@ -43,16 +45,11 @@
 #define SIZEQ 10
 #define MSG_SIZE 256
 #define Q_STORE "/print_q"
+#define QMSE_STORE "/mse_q"
 #define QUEUE_PERMISSIONS 0660
 #define MSE_SAMPLE 1 
 #define BUFF_DIM 50
-
-
-/*
-    POSSIBILI CORREZIONI DA FARE;
-   
-*/
-
+#define PERIOD_US_MSE (1000000L / MSE_SAMPLE)
 
 #define USAGE_STR				\
 	"Usage: %s [-s] [-n] [-f]\n"		\
@@ -77,10 +74,13 @@ double sig_val;
 double period_mse = 1/MSE_SAMPLE * NSEC_PER_SEC;
 
 pthread_mutex_t mutex;
+pthread_mutex_t mse_mutex_gen;
+pthread_mutex_t mse_mutex_filt;
 
 double glob_time = 0.0;
 double last_timestamp = 0;
-double buffer[BUFF_DIM];
+double buffer_gen[BUFF_DIM];
+double buffer_filt[BUFF_DIM];
 
 double get_butter(double cur, double * a, double * b)
 {
@@ -133,12 +133,14 @@ double get_mean_filter(double cur)
 }
 
 void generator_thread_body(){
+    static int h=0;
+    double buff_loc[BUFF_DIM]= {0.0};
 	// Generate signal
     // 
 	double sig_val_l= sin(2*M_PI*SIG_HZ*glob_time);
 
 	// Add noise to signal
-	double sig_noise_l= sig_val + 0.5*cos(2*M_PI*10*glob_time);
+	double sig_noise_l= sig_val_l + 0.5*cos(2*M_PI*10*glob_time);
 	sig_noise_l += 0.9*cos(2*M_PI*4*glob_time);
 	sig_noise_l += 0.9*cos(2*M_PI*12*glob_time);
 	sig_noise_l+= 0.8*cos(2*M_PI*15*glob_time);
@@ -147,11 +149,21 @@ void generator_thread_body(){
     pthread_mutex_lock(&mutex);
     sig_val = sig_val_l;
     sig_noise = sig_noise_l;
-    last_timestamp = glob_time;
-    glob_time += (1.0/F_SAMPLE); /* Sampling period in s */
-    // sample_index++;
+    glob_time += (1.0/F_SAMPLE); 
     pthread_mutex_unlock(&mutex);
-    
+    buff_loc[h%BUFF_DIM] = sig_val;
+    if(h%50 ==0){
+        pthread_mutex_lock(&mse_mutex_gen);
+        for(int i=0; i<BUFF_DIM; i++){
+            buffer_gen[i]=buff_loc[i];
+        }
+        pthread_mutex_unlock(&mse_mutex_gen);
+    }
+    h++;
+    //pthread_mutex_lock(&mse_mutex_gen);
+    //buffer_gen[h%BUFF_DIM] = sig_val;
+    //h++;
+    //pthread_mutex_unlock(&mse_mutex_gen);
    
 }
 
@@ -167,6 +179,8 @@ void* generator_thread(void * arg){
 void filter_thread_body(mqd_t coda){
     //static unsigned long last_processed_index = 0;
     double sig_filt;
+    static int h=0;
+    double buff_loc[BUFF_DIM] ={0.0};
     //= last_timestamp;
     //unsigned long local_index;
     pthread_mutex_lock(&mutex);
@@ -175,6 +189,7 @@ void filter_thread_body(mqd_t coda){
     double time_l = glob_time;
     //local_index   = sample_index;
     pthread_mutex_unlock(&mutex);
+    buff_loc[h%BUFF_DIM] = sig_filt;
     
     /*
     if (local_index == last_processed_index && last_processed_index !=0) {
@@ -190,6 +205,16 @@ void filter_thread_body(mqd_t coda){
     }
     else{
         sig_filt = get_mean_filter(sig_noise_l);
+    }
+
+    buff_loc[h%BUFF_DIM] = sig_filt;
+    if(h%50 ==0){
+        pthread_mutex_lock(&mse_mutex_filt);
+        for(int j=0; j<BUFF_DIM; j++){
+            buffer_filt[j] = buff_loc[j];
+        }
+        pthread_mutex_unlock(&mse_mutex_filt);
+        h++;
     }
     // Debug
     printf("tempo: %lf, sig_val: %lf, sig_noise: %lf, sig_filter: %lf\n", time_l, sig_val_l,sig_noise_l, sig_filt);
@@ -224,7 +249,11 @@ if (n < 0 || n >= (int)sizeof(msg)) {
         perror ("Filter: mq_send");
         exit (1);
     }
-    
+
+    //pthread_mutex_lock(&mse_mutex_filt);
+    //buffer_filt[h%BUFF_DIM] = sig_filt;
+    //h++;
+    //pthread_mutex_unlock(&mse_mutex_filt);
 }
 
 void* filter_thread(void * arg){
@@ -258,6 +287,54 @@ void* filter_thread(void * arg){
     }
 }
 
+void mse_calc_thread_body(mqd_t coda){
+
+    double signal_original[BUFF_DIM] = {0.0};
+    double signal_filtered[BUFF_DIM] = {0.0};
+    double mse =0.0;
+
+    pthread_mutex_lock(&mse_mutex_gen);
+    memcpy(signal_original, buffer_gen, BUFF_DIM * sizeof(double));
+    pthread_mutex_unlock(&mse_mutex_gen);
+
+    pthread_mutex_lock(&mse_mutex_filt);
+    memcpy(signal_filtered, buffer_filt, BUFF_DIM * sizeof(double));
+    pthread_mutex_unlock(&mse_mutex_filt);
+
+    for(int j=0; j<BUFF_DIM; j++){
+        double diff = signal_filtered[j] - signal_original[j];
+        mse += (diff * diff); 
+    }
+    mse = mse/BUFF_DIM;
+
+    char msg[MSG_SIZE];
+    int n =snprintf(msg, sizeof(msg), "%lf\n", mse);
+    if (n < 0 || n >= (int)sizeof(msg)) {
+        fprintf(stderr, "MSE Calculator: message truncated or snprintf error\n");
+        return;
+    }
+    if(mq_send(coda,msg,n+1,0)==-1){
+        perror("MSE CALCULATOR: errore nella send");
+        exit(1);
+    }
+}
+
+void * mse_calc_thread(void * arg){
+    periodic_thread * thd = (periodic_thread *) arg;
+    mqd_t mse_store;
+
+    if((mse_store=mq_open(QMSE_STORE,O_WRONLY,QUEUE_PERMISSIONS))==-1){
+        perror("MSE Calculator: mq_open (mse_store)");
+        exit(1);
+    }
+    start_periodic_timer(thd, thd->period);
+    while(1){
+        wait_next_activation(thd);
+        mse_calc_thread_body(mse_store);
+    }
+    
+}
+
 void parse_cmdline(int argc, char ** argv){
 	int opt;
 	
@@ -278,7 +355,7 @@ void parse_cmdline(int argc, char ** argv){
         case 'b':
             flag_type = 2; //butterworth filter
             break;
-		default: /* '?' */
+		default: 
 			fprintf(stderr, USAGE_STR, argv[0]);
 			exit(EXIT_FAILURE);
 		}
@@ -297,20 +374,23 @@ int main(int argc, char ** argv){
 
     periodic_thread *generator =  (periodic_thread *)malloc(sizeof(periodic_thread));
     periodic_thread *filter = (periodic_thread *) malloc(sizeof(periodic_thread));
+    periodic_thread *mse_calculator = (periodic_thread *) malloc (sizeof(periodic_thread));
 
     pthread_t gen;
     pthread_t filt;
+    pthread_t mse_calc;
 
     pthread_attr_t gen_attr;
     pthread_attr_t filt_attr;
+    pthread_attr_t mse_attr;
 
     struct sched_param _param;
     pthread_mutexattr_t mutex_attr;
-
-    // int f_sample = F_SAMPLE; /* Frequency of sampling in Hz */
-	// double t_sample = (1.0/f_sample) * 1000 * 1000 * 1000; /* Sampling period in ns */
+    pthread_mutexattr_t mse_mutex_attr_gen;
+    pthread_mutexattr_t mse_mutex_attr_filt;
 
     mqd_t q_store_local; //VEDERE SE DA METTERE GLOBALE
+    mqd_t mse_store_local;
 
     //mlockall();
 
@@ -319,25 +399,42 @@ int main(int argc, char ** argv){
 	
     pthread_attr_init(&gen_attr);
     pthread_attr_init(&filt_attr);
+    pthread_attr_init(&mse_attr);
 
     pthread_attr_setschedpolicy(&gen_attr, SCHED_FIFO);
     pthread_attr_setschedpolicy(&filt_attr, SCHED_FIFO);
+    pthread_attr_setschedpolicy(&mse_attr, SCHED_FIFO);
     
     _param.sched_priority = 70;  //da rivedere
     pthread_attr_setschedparam(&gen_attr, &_param);
     //fai partire thread
-    _param.sched_priority = 70;  //da rivedere
+    _param.sched_priority = 69;  //da rivedere
     pthread_attr_setschedparam(&filt_attr, &_param);
     //fai partire thread
+    _param.sched_priority = 60;  //da rivedere
+    pthread_attr_setschedparam(&mse_attr, &_param);
 
     pthread_attr_setinheritsched(&gen_attr, PTHREAD_EXPLICIT_SCHED);
     pthread_attr_setinheritsched(&filt_attr, PTHREAD_EXPLICIT_SCHED);
+    pthread_attr_setinheritsched(&mse_attr, PTHREAD_EXPLICIT_SCHED);
     
     pthread_attr_setdetachstate(&gen_attr, PTHREAD_CREATE_JOINABLE);
     pthread_attr_setdetachstate(&filt_attr, PTHREAD_CREATE_JOINABLE);
+    pthread_attr_setdetachstate(&mse_attr, PTHREAD_CREATE_JOINABLE);
 
     pthread_mutexattr_init(&mutex_attr);
+    pthread_mutexattr_setprotocol(&mutex_attr,PTHREAD_PRIO_PROTECT);
+    pthread_mutexattr_setprioceiling(&mutex,70);
     pthread_mutex_init(&mutex, &mutex_attr);
+    pthread_mutexattr_init(&mse_mutex_attr_gen);
+    pthread_mutexattr_setprotocol(&mse_mutex_attr_gen, PTHREAD_PRIO_PROTECT);
+    pthread_mutexattr_setprioceiling(&mse_mutex_attr_gen, 70);
+    pthread_mutex_init(&mse_mutex_gen, &mse_mutex_attr_gen);
+
+    pthread_mutexattr_init(&mse_mutex_attr_filt);
+    pthread_mutexattr_setprotocol(&mse_mutex_attr_filt, PTHREAD_PRIO_PROTECT);
+    pthread_mutexattr_setprioceiling(&mse_mutex_attr_filt, 69);
+    pthread_mutex_init(&mse_mutex_filt, &mse_mutex_attr_filt);
 
     //inizializza i thread periodici       
     generator->index = 0;
@@ -348,7 +445,12 @@ int main(int argc, char ** argv){
     filter->index = 1;
     filter->period = PERIOD_US;
     filter->wcet = 1000; //da rivedere    
-    filter->priority = 70; //da rivedere 
+    filter->priority = 69; //da rivedere 
+
+    mse_calculator->index = 2;
+    mse_calculator->period = PERIOD_US_MSE;
+    mse_calculator->wcet = 1000; 
+    mse_calculator->priority = 60; 
 
     /*
     if ((q_store = mq_open (Q_STORE, O_WRONLY)) == -1) {
@@ -367,23 +469,36 @@ int main(int argc, char ** argv){
    
     pthread_create(&gen, &gen_attr, generator_thread, (void *)generator);
     pthread_create(&filt, &filt_attr, filter_thread, (void *)filter);
+    pthread_create(&mse_calc, &mse_attr, mse_calc_thread, (void *)mse_calculator);
 
     /*
-     pthread_setaffinity_np(gen, sizeof(cpu_set_t), &cpuset);
+    pthread_setaffinity_np(gen, sizeof(cpu_set_t), &cpuset);
     pthread_setaffinity_np(filt, sizeof(cpu_set_t), &cpuset);
     */
-   
-    //JOINARE THREAD E CHIUDERE CODE
+
     
     pthread_join(gen, NULL);
     pthread_join(filt, (void**)&q_store_local);
+    pthread_join(mse_calc, (void **)&mse_store_local);
+    //VEDERE PER CODA
+    //pthread_join(mse_calc, NULL);
     mqd_t *q_store_final = (mqd_t *) q_store_local;
+    mqd_t *mse_store_final = (mqd_t *) mse_store_local;
     pthread_attr_destroy(&gen_attr);
     pthread_attr_destroy(&filt_attr);
+    pthread_attr_destroy(&mse_attr);
     pthread_mutexattr_destroy(&mutex_attr);
+    pthread_mutexattr_destroy(&mse_mutex_attr_gen);
+    pthread_mutexattr_destroy(&mse_mutex_attr_filt);
     pthread_mutex_destroy(&mutex);
+    pthread_mutex_destroy(&mse_mutex_gen);
+    pthread_mutex_destroy(&mse_mutex_filt);
+    //CHIUDERE CODA
     mq_close (q_store_final);
+    mq_close (mse_store_final);
     mq_unlink (Q_STORE);
+    mq_unlink (QMSE_STORE);
     free(generator);
     free(filter);
+    free(mse_calculator);
 }

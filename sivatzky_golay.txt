@@ -1,0 +1,45 @@
+
+
+#define SG_WINDOW_SIZE 5
+// Coefficienti CAUSALI per: Finestra=5, Ordine=2 [i, i-1, i-2, i-3, i-4]
+double SG_COEFFS_W5_P2[] = {
+    0.88571429, 0.25714286, -0.08571429, -0.14285714, 0.08571429
+};
+
+static int first_mean=0;
+
+
+double get_sg_filter(double cur)
+{
+    // Coefficienti e finestra definiti globalmente
+    static double history[SG_WINDOW_SIZE] = {0.0};
+    static int sg_startup_count = 0; // Simile a 'first_mean'
+    
+    double retval = 0.0;
+    int i;
+
+    // 1. Shifta la storia (i campioni più vecchi vanno verso la fine)
+    for (i = SG_WINDOW_SIZE - 1; i > 0; i--) {
+        history[i] = history[i-1];
+    }
+    
+    // 2. Inserisci il campione corrente in posizione 0
+    history[0] = cur;
+
+    // 3. Gestione Startup: finché non abbiamo 'SG_WINDOW_SIZE' campioni,
+    //    restituiamo il campione originale per evitare calcoli errati.
+    if (sg_startup_count < SG_WINDOW_SIZE) {
+        sg_startup_count++;
+        return cur; // Restituisce l'originale finché il buffer non è pieno
+    }
+
+    // 4. Applica il filtro (convoluzione)
+    //    history[0] = campione t
+    //    history[1] = campione t-1
+    //    ...
+    for (i = 0; i < SG_WINDOW_SIZE; i++) {
+        retval += SG_COEFFS_W5_P2[i] * history[i];
+    }
+
+    return retval;
+}
