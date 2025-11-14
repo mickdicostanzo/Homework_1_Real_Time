@@ -9,7 +9,7 @@ rm -f /dev/mqueue/mse_q
 STORE_PID=$!
 
 # Launch the second C program
-./filter $1 &
+./filter $5 &
 # Store its PID
 FILTER_PID=$!
 

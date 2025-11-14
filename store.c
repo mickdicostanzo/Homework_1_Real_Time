@@ -75,7 +75,7 @@ void store_body(mqd_t q_store,mqd_t mse_store, FILE * outfd){
     char msg[MSG_SIZE];
     const char delim[] = " ";
     char * token;
-    for(int i=0; i<SIZEQ; i++){
+    for(int i=0; i<SIZEQ; ++i){
 
     if (mq_receive (q_store, msg, MSG_SIZE, NULL) == -1) {
             perror ("Store: mq_receive");
@@ -86,7 +86,7 @@ void store_body(mqd_t q_store,mqd_t mse_store, FILE * outfd){
     token = strtok(msg, delim);
     while (token != NULL) {
         //fprintf(outfd, "%s", token);  // scrive il token
-        count++;
+        ++count;
 
         if (strcasecmp(token, "nan") != 0 ) {
                 // Se NON è "nan" o "inf", scrive il token
@@ -106,8 +106,8 @@ void store_body(mqd_t q_store,mqd_t mse_store, FILE * outfd){
 
     char mse_msg[MSG_SIZE];
     if(mq_receive(mse_store,mse_msg,MSG_SIZE,NULL) == -1){
-        perror("Store: mq_receive (mse)");
-        exit(1);
+        //perror("Store: mq_receive (mse)");
+        //exit(1);
     }
     else{
         printf("current_mse: %s",mse_msg);

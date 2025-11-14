@@ -74,7 +74,7 @@ void watch_dog(mqd_t coda){
         printf("Timeout: Filter non attivo");
     }
     else{
-        printf("Filter alive!!");
+        printf("Filter: %s",msg);
     }
 
 }

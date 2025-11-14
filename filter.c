@@ -46,17 +46,27 @@
 #define MSG_SIZE 256
 #define Q_STORE "/print_q"
 #define QMSE_STORE "/mse_q"
+#define WG_QUEUE "/watchdog_queue"
 #define QUEUE_PERMISSIONS 0660
 #define MSE_SAMPLE 1 
 #define BUFF_DIM 50
 #define PERIOD_US_MSE (1000000L / MSE_SAMPLE)
 
-#define USAGE_STR				\
-	"Usage: %s [-s] [-n] [-f]\n"		\
-	"\t -s: plot original signal\n"		\
-	"\t -n: plot noisy signal\n"		\
-	"\t -f: plot filtered signal\n"		\
-	""
+#define SG_WINDOW_SIZE 5
+// Coefficienti CAUSALI per: Finestra=5, Ordine=2 [i, i-1, i-2, i-3, i-4]
+double SG_COEFFS_W5_P2[] = {
+    0.88571429, 0.25714286, -0.08571429, -0.14285714, 0.08571429
+};
+
+#define USAGE_STR               \
+    "Usage: %s [-s] [-n] [-f] [-m | -b | -z]\n"    \
+    "\t -s: plot original signal\n"     \
+    "\t -n: plot noisy signal\n"        \
+    "\t -f: plot filtered signal\n"     \
+    "\t -m: use mean filter\n"          \
+    "\t -b: use butterworth filter\n"   \
+    "\t -z: use Savitzky-Golay filter\n" \
+    ""
 	
 #define BUTTERFILT_ORD 2
 double b [3] = {0.0134,    0.0267,    0.0134};
@@ -81,6 +91,14 @@ double glob_time = 0.0;
 double last_timestamp = 0;
 double buffer_gen[BUFF_DIM];
 double buffer_filt[BUFF_DIM];
+
+/*
+    struct queue_{
+    mqd_t store;
+    mqd_t wg;
+};typedef struct queue_ code_c;
+*/
+
 
 double get_butter(double cur, double * a, double * b)
 {
@@ -124,13 +142,50 @@ double get_mean_filter(double cur)
 	// Compute filtered value
 	if (first_mean == 0){
 		retval = vec_mean[0];
-		first_mean ++;
+		++first_mean;
 	}
 	else{
 		retval = (vec_mean[0] + vec_mean[1])/2;	
 	}
 	return retval;
 }
+
+
+double get_sg_filter(double cur)
+{
+    // Coefficienti e finestra definiti globalmente
+    static double history[SG_WINDOW_SIZE] = {0.0};
+    static int sg_startup_count = 0; // Simile a 'first_mean'
+    
+    double retval = 0.0;
+    int i;
+
+    // 1. Shifta la storia (i campioni più vecchi vanno verso la fine)
+    for (i = SG_WINDOW_SIZE - 1; i > 0; i--) {
+        history[i] = history[i-1];
+    }
+    
+    // 2. Inserisci il campione corrente in posizione 0
+    history[0] = cur;
+
+    // 3. Gestione Startup: finché non abbiamo 'SG_WINDOW_SIZE' campioni,
+    //    restituiamo il campione originale per evitare calcoli errati.
+    if (sg_startup_count < SG_WINDOW_SIZE) {
+        sg_startup_count++;
+        return cur; // Restituisce l'originale finché il buffer non è pieno
+    }
+
+    // 4. Applica il filtro (convoluzione)
+    //    history[0] = campione t
+    //    history[1] = campione t-1
+    //    ...
+    for (i = 0; i < SG_WINDOW_SIZE; i++) {
+        retval += SG_COEFFS_W5_P2[i] * history[i];
+    }
+
+    return retval;
+}
+
 
 void generator_thread_body(){
     static int h=0;
@@ -151,15 +206,17 @@ void generator_thread_body(){
     sig_noise = sig_noise_l;
     glob_time += (1.0/F_SAMPLE); 
     pthread_mutex_unlock(&mutex);
-    buff_loc[h%BUFF_DIM] = sig_val;
-    if(h%50 ==0){
+    buff_loc[h%BUFF_DIM] = sig_val_l;
+    if(h%BUFF_DIM ==0){
         pthread_mutex_lock(&mse_mutex_gen);
-        for(int i=0; i<BUFF_DIM; i++){
+        /*for(int i=0; i<BUFF_DIM; i++){
             buffer_gen[i]=buff_loc[i];
         }
+            */
+        memcpy(buffer_gen, buff_loc, BUFF_DIM * sizeof(double));
         pthread_mutex_unlock(&mse_mutex_gen);
     }
-    h++;
+    ++h;
     //pthread_mutex_lock(&mse_mutex_gen);
     //buffer_gen[h%BUFF_DIM] = sig_val;
     //h++;
@@ -181,6 +238,7 @@ void filter_thread_body(mqd_t coda){
     double sig_filt;
     static int h=0;
     double buff_loc[BUFF_DIM] ={0.0};
+    //static int count =0;
     //= last_timestamp;
     //unsigned long local_index;
     pthread_mutex_lock(&mutex);
@@ -189,7 +247,7 @@ void filter_thread_body(mqd_t coda){
     double time_l = glob_time;
     //local_index   = sample_index;
     pthread_mutex_unlock(&mutex);
-    buff_loc[h%BUFF_DIM] = sig_filt;
+    //buff_loc[h%BUFF_DIM] = sig_filt;
     
     /*
     if (local_index == last_processed_index && last_processed_index !=0) {
@@ -203,21 +261,29 @@ void filter_thread_body(mqd_t coda){
         //double sig_filt = get_butter(sig_noise, a, b);
         sig_filt = get_butter(sig_noise_l, a, b);
     }
+    else if(flag_type == 3){
+        sig_filt = get_sg_filter(sig_noise_l);
+    }
     else{
         sig_filt = get_mean_filter(sig_noise_l);
     }
 
     buff_loc[h%BUFF_DIM] = sig_filt;
     if(h%50 ==0){
+        
         pthread_mutex_lock(&mse_mutex_filt);
+        /*
         for(int j=0; j<BUFF_DIM; j++){
             buffer_filt[j] = buff_loc[j];
         }
+        */
+       
+        memcpy(buffer_filt, buff_loc, BUFF_DIM * sizeof(double));
         pthread_mutex_unlock(&mse_mutex_filt);
-        h++;
     }
+    ++h;
     // Debug
-    printf("tempo: %lf, sig_val: %lf, sig_noise: %lf, sig_filter: %lf\n", time_l, sig_val_l,sig_noise_l, sig_filt);
+    //printf("tempo: %lf, sig_val: %lf, sig_noise: %lf, sig_filter: %lf\n", time_l, sig_val_l,sig_noise_l, sig_filt);
    
 
     char msg[MSG_SIZE];
@@ -250,6 +316,19 @@ if (n < 0 || n >= (int)sizeof(msg)) {
         exit (1);
     }
 
+    /*
+    char wg_msg[MSG_SIZE]="I'm Alive";
+
+    if(count %BUFF_DIM==0){
+        if (mq_send (watch_dog, msg, n + 1, 0) == -1) {
+        perror ("Filter: mq_send");
+        exit (1);
+    }
+    }
+    ++count;
+
+    */
+    
     //pthread_mutex_lock(&mse_mutex_filt);
     //buffer_filt[h%BUFF_DIM] = sig_filt;
     //h++;
@@ -267,11 +346,19 @@ void* filter_thread(void * arg){
     //attr.mq_curmsgs = 0;
 
     mqd_t q_store;
+    //mqd_t q_wg;
 
      if ((q_store = mq_open (Q_STORE, O_WRONLY)) == -1) {
         perror ("Filter: mq_open (store)");
         exit (1);
     }
+
+    /*
+    if ((q_wg = mq_open (WG_QUEUE, O_WRONLY)) == -1) {
+        perror ("Filter: mq_open (watch dog)");
+        exit (1);
+    }
+    */
     start_periodic_timer(thd, thd->period);
     while(1){
         wait_next_activation(thd);
@@ -301,7 +388,7 @@ void mse_calc_thread_body(mqd_t coda){
     memcpy(signal_filtered, buffer_filt, BUFF_DIM * sizeof(double));
     pthread_mutex_unlock(&mse_mutex_filt);
 
-    for(int j=0; j<BUFF_DIM; j++){
+    for(int j=0; j<BUFF_DIM; ++j){
         double diff = signal_filtered[j] - signal_original[j];
         mse += (diff * diff); 
     }
@@ -338,7 +425,7 @@ void * mse_calc_thread(void * arg){
 void parse_cmdline(int argc, char ** argv){
 	int opt;
 	
-	while ((opt = getopt(argc, argv, "snfmb")) != -1) {
+	while ((opt = getopt(argc, argv, "snfmbz")) != -1) {
 		switch (opt) {
 		case 's':
 			flag_signal = 1;
@@ -354,6 +441,9 @@ void parse_cmdline(int argc, char ** argv){
             break;
         case 'b':
             flag_type = 2; //butterworth filter
+            break;
+        case 'z':
+            flag_type = 3; //sivatzky-golay filter
             break;
 		default: 
 			fprintf(stderr, USAGE_STR, argv[0]);
@@ -391,6 +481,9 @@ int main(int argc, char ** argv){
 
     mqd_t q_store_local; //VEDERE SE DA METTERE GLOBALE
     mqd_t mse_store_local;
+    mqd_t wg_queue_local;
+
+    //code_c code_locali = {q_store_local, wg_queue_local};
 
     //mlockall();
 
@@ -417,7 +510,7 @@ int main(int argc, char ** argv){
     pthread_attr_setinheritsched(&gen_attr, PTHREAD_EXPLICIT_SCHED);
     pthread_attr_setinheritsched(&filt_attr, PTHREAD_EXPLICIT_SCHED);
     pthread_attr_setinheritsched(&mse_attr, PTHREAD_EXPLICIT_SCHED);
-    
+    // pthread_attr_setdetachstate(&gen_attr, PTHREAD_CREATE_JOINABLE);
     pthread_attr_setdetachstate(&gen_attr, PTHREAD_CREATE_JOINABLE);
     pthread_attr_setdetachstate(&filt_attr, PTHREAD_CREATE_JOINABLE);
     pthread_attr_setdetachstate(&mse_attr, PTHREAD_CREATE_JOINABLE);
@@ -482,8 +575,11 @@ int main(int argc, char ** argv){
     pthread_join(mse_calc, (void **)&mse_store_local);
     //VEDERE PER CODA
     //pthread_join(mse_calc, NULL);
+    //code_c * code_locali_final = &code_locali;
+    //q_store_local = code_locali.store;
+    //wg_queue_local = code_locali.wg;
     mqd_t *q_store_final = (mqd_t *) q_store_local;
-    mqd_t *mse_store_final = (mqd_t *) mse_store_local;
+    mqd_t *mse_store_final = (mqd_t *) wg_queue_local;
     pthread_attr_destroy(&gen_attr);
     pthread_attr_destroy(&filt_attr);
     pthread_attr_destroy(&mse_attr);
@@ -496,8 +592,10 @@ int main(int argc, char ** argv){
     //CHIUDERE CODA
     mq_close (q_store_final);
     mq_close (mse_store_final);
+    mq_close(wg_queue_local);
     mq_unlink (Q_STORE);
     mq_unlink (QMSE_STORE);
+    mq_unlink(WG_QUEUE);
     free(generator);
     free(filter);
     free(mse_calculator);
