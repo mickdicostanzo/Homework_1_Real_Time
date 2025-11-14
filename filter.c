@@ -7,8 +7,16 @@
     - Di Costanzo Michele Pio
     - Di Palma Lorenzo
     - Zaccone Amedeo
-    I più forti
 */
+
+/* 
+        TO DO LIST:
+        1. Implentare MSE CALCULATOR
+        2. Implementare scrittura su terminale dell'MSE CALCULATOR
+        3. Implementare filtro di Savitzky-Golay (OPTIONAL - SFIZIO PER MICHELE)
+        4. iMPLEMTARE WATCHDOG (OPTIONAL)
+*/
+
 
 #define _GNU_SOURCE
 #include <stdio.h>
@@ -36,13 +44,13 @@
 #define MSG_SIZE 256
 #define Q_STORE "/print_q"
 #define QUEUE_PERMISSIONS 0660
+#define MSE_SAMPLE 1 
+#define BUFF_DIM 50
 
 
 /*
     POSSIBILI CORREZIONI DA FARE;
-    - sistemare la parte di apertura della coda di messaggi (aprire una volta sola)
-    - cambiare nei start periodic timer &thd con thd perché start periodic timer prende un puntatore
-    - usare struttura per periodic thread e coda per filter thread
+   
 */
 
 
@@ -61,15 +69,19 @@ static int first_mean=0;
 int flag_signal = 0;
 int flag_noise = 0;
 int flag_filtered = 0;
-int flag_type = 0; // 1:mean, 2:butterworth
+int flag_type = 0; // 1:mean, 2:butterworth 
 unsigned long sample_index = 0;
 double sig_noise;
 double sig_val;
+
+double period_mse = 1/MSE_SAMPLE * NSEC_PER_SEC;
 
 pthread_mutex_t mutex;
 
 double glob_time = 0.0;
 double last_timestamp = 0;
+double buffer[BUFF_DIM];
+
 double get_butter(double cur, double * a, double * b)
 {
 	double retval;
@@ -153,20 +165,24 @@ void* generator_thread(void * arg){
 }
 
 void filter_thread_body(mqd_t coda){
-    static unsigned long last_processed_index = 0;
+    //static unsigned long last_processed_index = 0;
     double sig_filt;
-    double time_l = last_timestamp;
-    unsigned long local_index;
+    //= last_timestamp;
+    //unsigned long local_index;
     pthread_mutex_lock(&mutex);
     double sig_noise_l = sig_noise;
     double sig_val_l = sig_val;
-    local_index   = sample_index;
+    double time_l = glob_time;
+    //local_index   = sample_index;
     pthread_mutex_unlock(&mutex);
     
+    /*
     if (local_index == last_processed_index && last_processed_index !=0) {
         return;
     }
     last_processed_index = local_index;
+    */
+    
     // Apply Filter to signal
     if(flag_type== 2){
         //double sig_filt = get_butter(sig_noise, a, b);
@@ -177,68 +193,38 @@ void filter_thread_body(mqd_t coda){
     }
     // Debug
     printf("tempo: %lf, sig_val: %lf, sig_noise: %lf, sig_filter: %lf\n", time_l, sig_val_l,sig_noise_l, sig_filt);
+   
+
     char msg[MSG_SIZE];
     char msg_signale[20];
     char msg_noise[20];
     char msg_filt[20];
-     int n;
-
-
+    int n;
     
-    //  int n_temp = snprintf(msg, sizeof(msg), "%lf ", time_l);
+   
+    //n = snprintf(msg, sizeof(msg), "%lf %lf %lf %lf\n",time_l, sig_val_l, sig_noise_l, sig_filt);  
+    double val_to_send   = flag_signal  ? sig_val_l   : NAN;
+    double noise_to_send = flag_noise  ? sig_noise_l : NAN;
+    double filt_to_send  = flag_filtered ? sig_filt  : NAN;
 
-    //  if(flag_signal){
-    //     n = snprintf(msg, sizeof(msg), "%lf %lf %s %s\n",time_l, sig_val_l,',', ',');
-    //  }
-    //  if(flag_noise){
-    //    n = snprintf(msg, sizeof(msg), "%lf %lf %lf %s\n",time_l, ',',sig_noise_l, ',');
-        
-    // }
-    // if(flag_filtered){
-    //     n = snprintf(msg, sizeof(msg), "%lf %s %s %lf\n",time_l, ',',',', sig_filt);
-        
-    //  }
-    //  if(flag_signal && flag_noise){
-    //    n = snprintf(msg, sizeof(msg), "%lf %lf %lf %s\n",time_l, sig_val_l, sig_noise_l, ',');  
-    //  }
-    //  if(flag_signal && flag_filtered){
-    //    n = snprintf(msg, sizeof(msg), "%lf %lf %s %lf\n",time_l, sig_val_l, ',', sig_filt);  
-    //  }
-    //  if(flag_noise && flag_filtered){
-    //    n = snprintf(msg, sizeof(msg), "%lf %s %lf %lf\n",time_l, ',', sig_noise_l, sig_filt);  
-    //  }
-     
-    //  if(flag_signal && flag_noise && flag_filtered){
-       n = snprintf(msg, sizeof(msg), "%lf %lf %lf %lf\n",time_l, sig_val_l, sig_noise_l, sig_filt);  
-    //  }
-    //  printf("Messaggio da inviare: %s\n", msg);
+    // 3. Formatta la stringa in una sola riga, usando gli SPAZI.
+    //    Questa è la versione semplice e sicura.
+    n = snprintf(msg, sizeof(msg), "%lf %lf %lf %lf\n", 
+                     time_l, 
+                     val_to_send, 
+                     noise_to_send, 
+                     filt_to_send);
     
-
-
-    /*
-        char msg[MSG_SIZE];
-    char sig_buf[32]   = " ";
-    char noise_buf[32] = " ";
-    char filt_buf[32]  = " ";
-    if (flag_signal) {
-    snprintf(sig_buf, sizeof(sig_buf), "%lf", sig_val_l);
-}
-
-if (flag_noise) {
-    snprintf(noise_buf, sizeof(noise_buf), "%lf", sig_noise_l);
-}
-
-if (flag_filtered) {
-    snprintf(filt_buf, sizeof(filt_buf), "%lf", sig_filt);
-}
-
-int n = snprintf(msg, sizeof(msg), "%lf,%s,%s,%s\n", time_l, sig_val_l, sig_noise_l, sig_filt);
 if (n < 0 || n >= (int)sizeof(msg)) {
     fprintf(stderr, "Filter: message truncated or snprintf error\n");
     return;
 }
+
+    if (mq_send (coda, msg, n + 1, 0) == -1) {
+        perror ("Filter: mq_send");
+        exit (1);
+    }
     
-    */
 }
 
 void* filter_thread(void * arg){
@@ -262,10 +248,13 @@ void* filter_thread(void * arg){
         wait_next_activation(thd);
         filter_thread_body(q_store);
         // if char = boh -> print, break
+        
+        /*
         if(getchar() == 'q'){
             printf("uscita dal thread avvenuta con successo\n");
             pthread_exit((mqd_t *)q_store);
         }
+        */
     }
 }
 

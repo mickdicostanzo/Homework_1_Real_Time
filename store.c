@@ -36,6 +36,7 @@
 #define QUEUE_PERMISSIONS 0660
 #define NSEC_PER_SEC 1000000000ULL
 
+
 #define USAGE_STR				\
 	"Usage: %s [-s] [-n] [-f]\n"		\
 	"\t -s: plot original signal\n"		\
@@ -45,6 +46,7 @@
 	
 struct timespec r;
 double period = 1/F_SAMPLE * NSEC_PER_SEC;
+
 
 void timespec_add_us(struct timespec *t, unsigned long d)
 {
@@ -70,8 +72,7 @@ void start_periodic_timer(uint64_t offs, int t)
 
 void store_body(mqd_t q_store, FILE * outfd){
     char msg[MSG_SIZE];
-    int count = 0;
-    const char delim[] = ",";
+    const char delim[] = " ";
     char * token;
     for(int i=0; i<SIZEQ; i++){
 
@@ -79,11 +80,18 @@ void store_body(mqd_t q_store, FILE * outfd){
             perror ("Store: mq_receive");
             exit (1);
        }
+    msg[strcspn(msg, "\n")] = 0;
+    int count = 0;
     token = strtok(msg, delim);
     while (token != NULL) {
-        fprintf(outfd, "%s", token);  // scrive il token
+        //fprintf(outfd, "%s", token);  // scrive il token
         count++;
 
+        if (strcasecmp(token, "nan") != 0 && strcasecmp(token, "inf") != 0) {
+                // Se NON è "nan" o "inf", scrive il token
+                fprintf(outfd, "%s", token);
+            }
+       
         if (count % 4 == 0) {
             fprintf(outfd, "\n");     // ogni 3 token, vai a capo
         } else {
@@ -92,7 +100,6 @@ void store_body(mqd_t q_store, FILE * outfd){
         token = strtok(NULL, delim);  // prossimo token
     }
 }
-
     //printf("Scrittura completata!\n");
     fflush(outfd);
 }
