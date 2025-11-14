@@ -323,7 +323,7 @@ void * mse_calc_thread(void * arg){
     periodic_thread * thd = (periodic_thread *) arg;
     mqd_t mse_store;
 
-    if((mse_store=mq_open(QMSE_STORE,O_WRONLY,QUEUE_PERMISSIONS))==-1){
+    if((mse_store=mq_open(QMSE_STORE,O_WRONLY| O_NONBLOCK,QUEUE_PERMISSIONS))==-1){
         perror("MSE Calculator: mq_open (mse_store)");
         exit(1);
     }

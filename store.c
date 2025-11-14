@@ -109,7 +109,10 @@ void store_body(mqd_t q_store,mqd_t mse_store, FILE * outfd){
         perror("Store: mq_receive (mse)");
         exit(1);
     }
-    printf("current_mse: %s",mse_msg);
+    else{
+        printf("current_mse: %s",mse_msg);
+    }
+    
 }
 
 int main(int argc, char ** argv){
@@ -121,13 +124,13 @@ int main(int argc, char ** argv){
     struct mq_attr attr;
     struct mq_attr mse_attr;
 
-    attr.mq_flags = 0;
+    attr.mq_flags =0;
     attr.mq_maxmsg = SIZEQ;
     attr.mq_msgsize = MSG_SIZE;
     attr.mq_curmsgs = 0;
 
-    mse_attr.mq_flags =0;
-    mse_attr.mq_maxmsg = SIZEQ;
+    mse_attr.mq_flags |= O_NONBLOCK;
+    mse_attr.mq_maxmsg = 1;
     mse_attr.mq_msgsize = MSG_SIZE;
     mse_attr.mq_curmsgs = 0;
 
@@ -136,7 +139,7 @@ int main(int argc, char ** argv){
         exit (1);
     }
 
-    if ((mse_store = mq_open (QMSE_STORE, O_RDONLY | O_CREAT,QUEUE_PERMISSIONS,&mse_attr)) == -1) {
+    if ((mse_store = mq_open (QMSE_STORE, O_RDONLY | O_CREAT | O_NONBLOCK,QUEUE_PERMISSIONS,&mse_attr)) == -1) {
         perror ("Store: mq_open (mse_store)");
         exit (1);
     }
